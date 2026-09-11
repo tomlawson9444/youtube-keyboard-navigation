@@ -37,16 +37,34 @@
   ].join(',');
 
   const SKIP_AD_SELECTORS = [
-    '.ytp-ad-skip-button',
-    '.ytp-ad-skip-button-modern',
+    // Modern desktop skip buttons
     '.ytp-skip-ad-button',
-    'button.ytp-ad-skip-button-icon',
-    '.ytp-ad-skip-button-container button',
+    '.ytp-ad-skip-button-modern',
+    '.ytp-ad-skip-button',
     '.ytp-ad-skip-button-slot button',
+    '.ytp-ad-skip-button-container button',
+    '.ytp-ad-skip-button-slot',
+    '.ytp-ad-skip-button-container',
+    'button.ytp-ad-skip-button-icon',
     'button[id^="skip-button"]',
+    'button.ytp-ad-skip-button-modern',
+    '.ytp-ad-player-overlay-skip-or-preview button',
+    '.ytp-ad-player-overlay-skip-or-preview',
+    '.ytp-ad-player-overlay-skip-or-preview-modern button',
+    '.ytp-ad-player-overlay-layout--bottom .ytp-ad-player-overlay-skip-or-preview',
+    // Text container & inner elements
+    '.ytp-ad-text.ytp-ad-skip-button-text',
+    '.ytp-ad-skip-button-text',
+    // Aria label and custom attributes
+    'button[aria-label*="skip" i]',
+    'button[aria-label*="Skip" i]',
+    '[aria-label*="Skip ad" i]',
+    '[aria-label*="skip ad" i]',
+    // Legacy / banner / overlays
     '.videoAdUiSkipButton',
     'button.ytp-ad-overlay-close-button',
-    '.ytp-ad-text.ytp-ad-skip-button-text'
+    '.ytp-ad-overlay-close-button',
+    '.ytp-ad-overlay-close-container button'
   ];
 
   // Initialise
@@ -55,6 +73,7 @@
     createOSD();
     createHelpModal();
     setupEventListeners();
+    setupAdObserver();
   }
 
   // Page detection helpers
@@ -872,31 +891,259 @@
     }
   }
 
+  // Helper to dispatch full pointer/mouse click event sequence for Polymer/Closure compatibility
+  function clickElement(el) {
+    if (!el) return false;
+    const targets = [];
+    if (el.closest) {
+      const btn = el.closest('button');
+      if (btn && !targets.includes(btn)) targets.push(btn);
+    }
+    if (!targets.includes(el)) targets.push(el);
+    if (el.parentElement && !targets.includes(el.parentElement)) targets.push(el.parentElement);
+
+    const innerBtn = el.querySelector && el.querySelector('button');
+    if (innerBtn && !targets.includes(innerBtn)) targets.push(innerBtn);
+
+    let clicked = false;
+    for (const target of targets) {
+      try {
+        const rect = target.getBoundingClientRect ? target.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
+        const clientX = rect.left + (rect.width ? rect.width / 2 : 10);
+        const clientY = rect.top + (rect.height ? rect.height / 2 : 10);
+        const eventOpts = {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          composed: true,
+          clientX: clientX,
+          clientY: clientY,
+          button: 0,
+          buttons: 1
+        };
+
+        if (window.PointerEvent) {
+          target.dispatchEvent(new PointerEvent('pointerdown', eventOpts));
+        }
+        target.dispatchEvent(new MouseEvent('mousedown', eventOpts));
+        if (window.PointerEvent) {
+          target.dispatchEvent(new PointerEvent('pointerup', eventOpts));
+        }
+        target.dispatchEvent(new MouseEvent('mouseup', eventOpts));
+        target.dispatchEvent(new MouseEvent('click', eventOpts));
+
+        if (typeof target.click === 'function') {
+          target.click();
+        }
+        clicked = true;
+      } catch (err) {
+        try {
+          if (typeof target.click === 'function') {
+            target.click();
+            clicked = true;
+          }
+        } catch (e) {}
+      }
+    }
+    return clicked;
+  }
+
+  // Find all potential skip buttons using selectors and deep text/aria scanning
+  function findSkipButtons() {
+    const candidates = [];
+
+    // 1. Check known selectors
+    for (const selector of SKIP_AD_SELECTORS) {
+      try {
+        const found = document.querySelectorAll(selector);
+        for (let i = 0; i < found.length; i++) {
+          const el = found[i];
+          if (el && !candidates.includes(el)) {
+            candidates.push(el);
+          }
+        }
+      } catch (e) {}
+    }
+
+    // 2. Deep scan player containers for skip text or skip aria labels
+    const containers = [
+      document.getElementById('movie_player'),
+      document.querySelector('.video-ads'),
+      document.querySelector('.ytp-ad-module'),
+      document.querySelector('.ytp-ad-player-overlay'),
+      document.querySelector('ytd-player')
+    ].filter(Boolean);
+
+    for (const container of containers) {
+      try {
+        const allEls = container.querySelectorAll('button, div, span, a');
+        for (let i = 0; i < allEls.length; i++) {
+          const el = allEls[i];
+          if (candidates.includes(el)) continue;
+
+          // Check aria-label
+          const aria = (el.getAttribute('aria-label') || '').trim().toLowerCase();
+          if (aria.includes('skip ad') || aria === 'skip' || aria.includes('skip advertisement')) {
+            candidates.push(el);
+            continue;
+          }
+
+          // Check textContent
+          const text = (el.textContent || '').trim().toLowerCase();
+          if (
+            text === 'skip' ||
+            text === 'skip ad' ||
+            text === 'skip ads' ||
+            text === 'skip advertisement' ||
+            (text.includes('skip') && text.length <= 15 && !text.startsWith('skip in'))
+          ) {
+            candidates.push(el);
+          }
+        }
+      } catch (e) {}
+    }
+
+    return candidates;
+  }
+
+  function dismissOverlayAds() {
+    const overlays = document.querySelectorAll(
+      '.ytp-ad-overlay-close-button, button.ytp-ad-overlay-close-button, .ytp-ad-image-overlay button'
+    );
+    for (let i = 0; i < overlays.length; i++) {
+      clickElement(overlays[i]);
+    }
+  }
+
   // Skip Video Ad
   function skipAd() {
-    for (const selector of SKIP_AD_SELECTORS) {
-      const btn = document.querySelector(selector);
-      if (btn && isElementVisible(btn)) {
-        btn.click();
-        showOSD('Ad Skipped', '⏭');
-        return true;
+    let handled = false;
+
+    // 1. Try to find and click any skip buttons
+    const buttons = findSkipButtons();
+    for (const btn of buttons) {
+      if (clickElement(btn)) {
+        handled = true;
       }
     }
 
-    // Fallback: Check if movie player has ad showing
+    // 2. Dismiss any overlay banner ads
+    dismissOverlayAds();
+
+    // 3. Fast-forward ad video if ad is currently showing/interrupting
     const player = getPlayer();
     const video = getVideo();
     const isAd = document.querySelector('.ad-showing, .ad-interrupting') ||
-                 (player && player.classList && player.classList.contains('ad-showing'));
+                 (player && player.classList && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting')));
 
-    if (isAd && video && isFinite(video.duration) && video.duration > 0) {
-      video.currentTime = video.duration;
-      showOSD('Ad Fast-Forwarded', '⏭');
+    if (isAd && video) {
+      handled = true;
+      try {
+        video.muted = true;
+        video.playbackRate = 16.0;
+        if (isFinite(video.duration) && video.duration > 0) {
+          video.currentTime = video.duration;
+        }
+      } catch (e) {}
+
+      // Secondary micro-checks after fast-forward to click newly revealed skip button
+      setTimeout(() => {
+        const nextButtons = findSkipButtons();
+        for (const btn of nextButtons) {
+          clickElement(btn);
+        }
+        dismissOverlayAds();
+      }, 60);
+
+      setTimeout(() => {
+        const nextButtons = findSkipButtons();
+        for (const btn of nextButtons) {
+          clickElement(btn);
+        }
+        dismissOverlayAds();
+      }, 180);
+    }
+
+    if (handled) {
+      showOSD('Ad Skipped', '⏭');
       return true;
     }
 
     showOSD('No Ad to Skip', '⏭');
     return false;
+  }
+
+  // Automatic Ad Observer to dismiss skip buttons as soon as they appear in the DOM
+  let adObserver = null;
+  let adObserverThrottle = null;
+
+  function setupAdObserver() {
+    if (adObserver) return;
+
+    const checkAndAutoSkip = () => {
+      const isAd = document.querySelector('.ad-showing, .ad-interrupting, .video-ads, .ytp-ad-module');
+      if (!isAd) return;
+
+      const buttons = findSkipButtons();
+      for (const btn of buttons) {
+        clickElement(btn);
+      }
+      dismissOverlayAds();
+    };
+
+    const throttledCheck = () => {
+      if (adObserverThrottle) return;
+      adObserverThrottle = setTimeout(() => {
+        adObserverThrottle = null;
+        checkAndAutoSkip();
+      }, 100);
+    };
+
+    try {
+      adObserver = new MutationObserver((mutations) => {
+        let relevant = false;
+        for (let i = 0; i < mutations.length; i++) {
+          const m = mutations[i];
+          if (m.target && m.target.classList) {
+            const cls = m.target.className || '';
+            if (typeof cls === 'string' && (cls.includes('ad-') || cls.includes('ytp-ad') || cls.includes('video-ads'))) {
+              relevant = true;
+              break;
+            }
+          }
+          if (m.addedNodes.length > 0) {
+            relevant = true;
+            break;
+          }
+        }
+        if (relevant) {
+          throttledCheck();
+        }
+      });
+
+      const observeTarget = () => {
+        const player = document.getElementById('movie_player') || document.body;
+        if (player) {
+          adObserver.observe(player, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['class']
+          });
+        }
+      };
+
+      observeTarget();
+
+      window.addEventListener('yt-navigate-finish', () => {
+        if (adObserver) {
+          adObserver.disconnect();
+          observeTarget();
+        }
+      });
+    } catch (e) {
+      console.warn('YouTube Nav: could not initialise adObserver', e);
+    }
   }
 
   // Tiled / Windowed Fullscreen (strictly within current window/tile)
@@ -1212,7 +1459,7 @@
     }
 
     // SKIP AD: Shift+A or a
-    if (key.toLowerCase() === 'a') {
+    if (key.toLowerCase() === 'a' || e.code === 'KeyA') {
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
