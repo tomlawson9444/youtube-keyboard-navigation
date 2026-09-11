@@ -42,7 +42,7 @@ m                                → Toggle mute / unmute	key	m
 [ / <                            → Slow down playback (-0.25x)	key	[
 SHIFT + N                        → Next video in playlist/queue	shift_key	N
 SHIFT + P                        → Previous video	shift_key	P
-t                                → Toggle theater mode	key	t
+t                                → Toggle theatre mode	key	t
 i                                → Toggle miniplayer	key	i
 c                                → Toggle subtitles / captions	key	c
 + / SHIFT + L                    → Like / Toggle like	key	+

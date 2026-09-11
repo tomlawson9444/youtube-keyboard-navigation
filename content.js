@@ -49,7 +49,7 @@
     '.ytp-ad-text.ytp-ad-skip-button-text'
   ];
 
-  // Initialize
+  // Initialise
   function init() {
     injectExtensionStyles();
     createOSD();
@@ -286,7 +286,7 @@
     setSafeHTML(modalBackdrop, `
       <div id="yt-kbd-modal">
         <div class="yt-kbd-header">
-          <h2><span>⌨</span> YouTube Keyboard Shortcuts</h2>
+          <h2><span>⌨</span> YouTube Keyboard Shortcuts — Omarchy Edition</h2>
           <button class="yt-kbd-close-btn" id="yt-kbd-close">&times;</button>
         </div>
 
@@ -338,7 +338,7 @@
               <div class="yt-kbd-keys"><kbd class="yt-kbd-key">Shift+N</kbd> <kbd class="yt-kbd-key">Shift+P</kbd></div>
             </div>
             <div class="yt-kbd-shortcut-row">
-              <span class="yt-kbd-desc">Theater Mode / Miniplayer</span>
+              <span class="yt-kbd-desc">Theatre Mode / Miniplayer</span>
               <div class="yt-kbd-keys"><kbd class="yt-kbd-key">t</kbd> / <kbd class="yt-kbd-key">i</kbd></div>
             </div>
             <div class="yt-kbd-shortcut-row">
@@ -1533,7 +1533,7 @@
         e.preventDefault();
         const btn = document.querySelector('.ytp-size-button');
         if (btn) btn.click();
-        showOSD('Theater Mode', '🔲');
+        showOSD('Theatre Mode', '🔲');
         return;
       }
       if (key === 'i') {
