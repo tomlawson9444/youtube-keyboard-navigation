@@ -314,3 +314,19 @@ body.yt-kbd-tiled-fullscreen #comments,
 body.yt-kbd-tiled-fullscreen ytd-masthead {
   display: none !important;
 }
+
+/* Black Screen Prevention: ensure main video is never hidden when playing */
+#movie_player:not(.ad-showing):not(.ad-interrupting) video.html5-main-video {
+  opacity: 1 !important;
+  visibility: visible !important;
+  display: block !important;
+}
+
+/* Suppress leftover dark ad overlays when no ad is showing */
+#movie_player:not(.ad-showing):not(.ad-interrupting) .ytp-ad-action-interstitial,
+#movie_player:not(.ad-showing):not(.ad-interrupting) .ytp-ad-action-interstitial-background,
+#movie_player:not(.ad-showing):not(.ad-interrupting) .ytp-ad-player-overlay {
+  display: none !important;
+  pointer-events: none !important;
+}
+

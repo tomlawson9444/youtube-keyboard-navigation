@@ -177,6 +177,20 @@
         display: none !important;
       }
 
+      /* Black Screen Prevention: ensure main video is never hidden when playing */
+      #movie_player:not(.ad-showing):not(.ad-interrupting) video.html5-main-video {
+        opacity: 1 !important;
+        visibility: visible !important;
+        display: block !important;
+      }
+      /* Suppress leftover dark ad overlays when no ad is showing */
+      #movie_player:not(.ad-showing):not(.ad-interrupting) .ytp-ad-action-interstitial,
+      #movie_player:not(.ad-showing):not(.ad-interrupting) .ytp-ad-action-interstitial-background,
+      #movie_player:not(.ad-showing):not(.ad-interrupting) .ytp-ad-player-overlay {
+        display: none !important;
+        pointer-events: none !important;
+      }
+
       /* Highlight for selected elements (video cards, icons, buttons) */
       .yt-kbd-selected {
         outline: 3px solid #ff0033 !important;
@@ -1009,7 +1023,46 @@
     }
   }
 
-  // Single execution of skip action: clicks buttons, dismisses overlays, accelerates ad
+  // Recover video visibility if an ad or overlay left the player in a black state
+  function recoverVideoDisplay() {
+    const video = getVideo();
+    const player = getPlayer();
+
+    // 1. Force video element visible
+    if (video) {
+      video.style.setProperty('opacity', '1', 'important');
+      video.style.setProperty('visibility', 'visible', 'important');
+      video.style.setProperty('display', 'block', 'important');
+      if (video.playbackRate > 2.0) {
+        video.playbackRate = 1.0;
+      }
+    }
+
+    // 2. Hide any leftover black ad overlays or interstitials
+    const stuckOverlays = document.querySelectorAll(
+      '.ytp-ad-action-interstitial, .ytp-ad-action-interstitial-background, .ytp-ad-player-overlay'
+    );
+    stuckOverlays.forEach(el => {
+      el.style.setProperty('display', 'none', 'important');
+    });
+
+    // 3. If main video is actually playing, remove leftover ad classes from player
+    if (video && !video.paused && player && player.classList) {
+      const buttons = findSkipButtons();
+      if (buttons.length === 0 && isFinite(video.duration) && video.duration > 60) {
+        player.classList.remove('ad-showing');
+        player.classList.remove('ad-interrupting');
+      }
+    }
+
+    // 4. Force player reflow to restore video surface
+    if (player && typeof player.setSize === 'function') {
+      try { player.setSize(); } catch (e) {}
+    }
+    window.dispatchEvent(new Event('resize'));
+  }
+
+  // Single execution of skip action: clicks buttons, dismisses overlays, recovers video surface
   function singleSkipPass() {
     const player = getPlayer();
     const isAd = Boolean(
@@ -1038,26 +1091,8 @@
       } catch (e) {}
     }
 
-    // 4. Fast-forward video ONLY when an ad is actively playing
-    if (isAd) {
-      const video = getVideo();
-      if (video && isFinite(video.duration) && video.duration > 0) {
-        handled = true;
-        try {
-          video.muted = true;
-          video.playbackRate = 16.0;
-          video.currentTime = Math.max(0, video.duration - 0.1);
-
-          const restoreSpeed = () => {
-            if (video && video.playbackRate === 16.0) {
-              video.playbackRate = 1.0;
-            }
-          };
-          video.addEventListener('ended', restoreSpeed, { once: true });
-          setTimeout(restoreSpeed, 1200);
-        } catch (e) {}
-      }
-    }
+    // 4. Ensure video display is recovered and never left black
+    recoverVideoDisplay();
 
     return { isAd, buttonsFound: buttons.length > 0, handled };
   }
@@ -1068,6 +1103,7 @@
 
     if (!initial.isAd && !initial.buttonsFound) {
       showOSD('No Ad to Skip', '⏭');
+      recoverVideoDisplay();
       return false;
     }
 
@@ -1075,14 +1111,7 @@
     const followUpDelays = [70, 150, 300, 550, 900, 1400, 2000, 2800];
     followUpDelays.forEach(delay => {
       setTimeout(() => {
-        const pass = singleSkipPass();
-        // Once all ads and CTAs have cleared, ensure video playback rate is 1.0
-        if (!pass.isAd && !pass.buttonsFound) {
-          const video = getVideo();
-          if (video && video.playbackRate === 16.0) {
-            video.playbackRate = 1.0;
-          }
-        }
+        singleSkipPass();
       }, delay);
     });
 
@@ -1356,6 +1385,7 @@
     clearNavSelection();
     watchFocus = 'player';
     if (modalBackdrop) modalBackdrop.classList.remove('show');
+    recoverVideoDisplay();
   }
 
   function handleKeyDown(e) {
