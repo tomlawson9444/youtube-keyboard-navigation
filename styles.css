@@ -310,10 +310,9 @@ body.yt-kbd-tiled-fullscreen ytd-masthead {
   display: block !important;
 }
 
-/* Suppress leftover dark ad overlays when no ad is showing */
+/* Suppress leftover dark interstitial overlays when no ad is showing */
 #movie_player:not(.ad-showing):not(.ad-interrupting) .ytp-ad-action-interstitial,
-#movie_player:not(.ad-showing):not(.ad-interrupting) .ytp-ad-action-interstitial-background,
-#movie_player:not(.ad-showing):not(.ad-interrupting) .ytp-ad-player-overlay {
+#movie_player:not(.ad-showing):not(.ad-interrupting) .ytp-ad-action-interstitial-background {
   display: none !important;
   pointer-events: none !important;
 }
