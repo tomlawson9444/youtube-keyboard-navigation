@@ -69,7 +69,6 @@
     createOSD();
     createHelpModal();
     setupEventListeners();
-    setupAdObserver();
   }
 
   // Page detection helpers
@@ -962,40 +961,23 @@
       } catch (e) {}
     }
 
-    // 2. Deep scan player containers for button elements with skip text or skip aria labels
-    const containers = [
-      document.getElementById('movie_player'),
-      document.querySelector('.video-ads'),
-      document.querySelector('.ytp-ad-module'),
-      document.querySelector('ytd-player')
-    ].filter(Boolean);
-
-    for (const container of containers) {
+    // 2. Scan ad modules strictly for button elements with skip text or skip aria labels
+    const adModule = document.querySelector('.video-ads.ytp-ad-module, .ytp-ad-module');
+    if (adModule) {
       try {
-        const btns = container.querySelectorAll('button, [role="button"], .ytp-button, [class*="skip" i]');
+        const btns = adModule.querySelectorAll('button, [role="button"], .ytp-button');
         for (let i = 0; i < btns.length; i++) {
           const el = btns[i];
           if (candidates.includes(el)) continue;
 
-          // Exclude outer layout containers
-          if (el.children && el.children.length > 3) continue;
-
-          // Check aria-label
           const aria = (el.getAttribute('aria-label') || '').trim().toLowerCase();
-          if (aria.includes('skip ad') || aria === 'skip' || aria.includes('skip advertisement')) {
+          if (aria.includes('skip')) {
             candidates.push(el);
             continue;
           }
 
-          // Check textContent
           const text = (el.textContent || '').trim().toLowerCase();
-          if (
-            text === 'skip' ||
-            text === 'skip ad' ||
-            text === 'skip ads' ||
-            text === 'skip advertisement' ||
-            (text.includes('skip') && text.length <= 15 && !text.startsWith('skip in'))
-          ) {
+          if (text.includes('skip') && text.length <= 15 && !text.startsWith('skip in')) {
             candidates.push(el);
           }
         }
@@ -1014,72 +996,14 @@
     }
   }
 
-  // Single execution of multi-pronged skip mechanisms
-  function executeSkipAction() {
-    let success = false;
-
-    // 1. Click any detected skip buttons
-    const buttons = findSkipButtons();
-    for (const btn of buttons) {
-      if (clickSkipButton(btn)) {
-        success = true;
-      }
-    }
-
-    // 2. Dismiss any overlay banner ads
-    dismissOverlayAds();
-
-    // 3. YouTube Player native API methods (running in MAIN world)
-    const player = getPlayer();
-    if (player) {
-      if (typeof player.cancelPlayback === 'function') {
-        try {
-          player.cancelPlayback();
-          success = true;
-        } catch (e) {}
-      }
-      if (typeof player.skipAd === 'function') {
-        try {
-          player.skipAd();
-          success = true;
-        } catch (e) {}
-      }
-    }
-
-    // 4. Video acceleration & instant skip
-    const isAd = Boolean(
-      document.querySelector('.ad-showing, .ad-interrupting, .ytp-ad-player-overlay, ytd-ad-slot-renderer') ||
-      (player && player.classList && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting')))
-    );
-
-    const videos = document.querySelectorAll('video');
-    videos.forEach(video => {
-      if (!video) return;
-      if (isAd || buttons.length > 0) {
-        success = true;
-        try {
-          video.muted = true;
-          video.playbackRate = 16.0;
-          if (isFinite(video.duration) && video.duration > 0) {
-            const targetTime = Math.max(0, video.duration - 0.1);
-            if (video.currentTime < targetTime) {
-              video.currentTime = targetTime;
-            }
-          }
-        } catch (e) {}
-      }
-    });
-
-    return success;
-  }
-
-  // Skip Video Ad on keypress with rapid burst retries
+  // Skip Video Ad on keypress (Shift+A or a)
   function skipAd() {
     const player = getPlayer();
     const isAd = Boolean(
-      document.querySelector('.ad-showing, .ad-interrupting, .ytp-ad-player-overlay, ytd-ad-slot-renderer, .video-ads') ||
+      document.querySelector('.ad-showing, .ad-interrupting') ||
       (player && player.classList && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting')))
     );
+
     const buttons = findSkipButtons();
 
     if (!isAd && buttons.length === 0) {
@@ -1087,76 +1011,61 @@
       return false;
     }
 
-    // Execute immediately
-    executeSkipAction();
+    let handled = false;
 
-    // Burst retries over the next 750ms to handle DOM delays and button mount animations
-    [40, 100, 200, 350, 500, 750].forEach(delay => {
-      setTimeout(() => {
-        executeSkipAction();
-      }, delay);
-    });
+    // 1. Click skip buttons
+    for (const btn of buttons) {
+      if (clickSkipButton(btn)) {
+        handled = true;
+      }
+    }
+
+    // 2. Dismiss any overlay banner ads
+    dismissOverlayAds();
+
+    // 3. YouTube Player native API skip
+    if (player && typeof player.skipAd === 'function') {
+      try {
+        player.skipAd();
+        handled = true;
+      } catch (e) {}
+    }
+
+    // 4. Fast-forward video ONLY when an ad is actively playing
+    if (isAd) {
+      const video = getVideo();
+      if (video && isFinite(video.duration) && video.duration > 0) {
+        handled = true;
+        try {
+          video.muted = true;
+          video.playbackRate = 16.0;
+          video.currentTime = Math.max(0, video.duration - 0.1);
+
+          const restoreSpeed = () => {
+            if (video && video.playbackRate === 16.0) {
+              video.playbackRate = 1.0;
+            }
+          };
+          video.addEventListener('ended', restoreSpeed, { once: true });
+          setTimeout(restoreSpeed, 1000);
+        } catch (e) {}
+      }
+    }
+
+    // Burst retry for smooth button clicking during animation transitions
+    if (buttons.length > 0) {
+      [60, 150, 300].forEach(delay => {
+        setTimeout(() => {
+          const retryButtons = findSkipButtons();
+          for (const b of retryButtons) {
+            clickSkipButton(b);
+          }
+        }, delay);
+      });
+    }
 
     showOSD('Ad Skipped', '⏭');
     return true;
-  }
-
-  // Automatic Ad Observer to dismiss skip buttons as soon as they appear in the DOM
-  let adObserver = null;
-  let adObserverThrottle = null;
-
-  function setupAdObserver() {
-    if (adObserver) return;
-
-    const checkAndAutoSkip = () => {
-      const player = getPlayer();
-      const isAd = Boolean(
-        document.querySelector('.ad-showing, .ad-interrupting, .video-ads, .ytp-ad-player-overlay') ||
-        (player && player.classList && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting')))
-      );
-
-      const buttons = findSkipButtons();
-      if (isAd || buttons.length > 0) {
-        executeSkipAction();
-      } else {
-        // Ad has finished: restore playback speed to 1x if it was accelerated
-        const video = getVideo();
-        if (video && video.playbackRate === 16.0) {
-          video.playbackRate = 1.0;
-        }
-      }
-    };
-
-    const throttledCheck = () => {
-      if (adObserverThrottle) return;
-      adObserverThrottle = setTimeout(() => {
-        adObserverThrottle = null;
-        checkAndAutoSkip();
-      }, 80);
-    };
-
-    try {
-      adObserver = new MutationObserver(() => {
-        throttledCheck();
-      });
-
-      adObserver.observe(document.documentElement, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['class', 'id']
-      });
-
-      // Periodic check interval during active ads
-      setInterval(() => {
-        const isAd = document.querySelector('.ad-showing, .ad-interrupting');
-        if (isAd) {
-          executeSkipAction();
-        }
-      }, 250);
-    } catch (e) {
-      console.warn('YouTube Nav: could not initialise adObserver', e);
-    }
   }
 
   // Tiled / Windowed Fullscreen (strictly within current window/tile)
