@@ -1,0 +1,117 @@
+#!/bin/bash
+
+# omarchy:summary=Display annotated YouTube keybindings using an interactive search menu.
+# omarchy:group=menu
+# omarchy:name=youtube-keybindings
+# omarchy:args=[--print|-p]
+
+print_only=false
+
+while (($#)); do
+  case "$1" in
+    --print|-p)
+      print_only=true
+      ;;
+    *)
+      ;;
+  esac
+  shift
+done
+
+output_keybindings() {
+  cat << 'RECORDSEOF'
+SHIFT + K / k                    → Play / Pause video	shift_key	K
+SHIFT + A / a                    → Skip video ad immediately	key	a
+SHIFT + F / w                    → Tiled fullscreen (windowed - stays in tile)	key	w
+f                                → Toggle native OS fullscreen	key	f
+TAB / SHIFT + TAB                → Cycle on-page icons (Home, Search...) & videos	wtype_key	Tab
+h                                → Focus YouTube Home logo (Enter goes Home)	key	h
+ENTER                            → Activate selected element / Open video	wtype_key	Return
+ESCAPE / LEFT                    → Deselect element / return to player	wtype_key	Escape
+v / r                            → Toggle page element navigation	key	v
+SPACE / SHIFT + SPACE            → Smooth page scroll (does NOT pause video)	wtype_key	space
+LEFT                             → Seek backward 5s	wtype_key	Left
+RIGHT                            → Seek forward 5s	wtype_key	Right
+j                                → Seek backward 10s	key	j
+l                                → Seek forward 10s	key	l
+UP                               → Volume up (+5%)	wtype_key	Up
+DOWN                             → Volume down (-5%)	wtype_key	Down
+m                                → Toggle mute / unmute	key	m
+0 .. 9                           → Seek to 0% .. 90%	key	0
+] / >                            → Speed up playback (+0.25x)	key	]
+[ / <                            → Slow down playback (-0.25x)	key	[
+SHIFT + N                        → Next video in playlist/queue	shift_key	N
+SHIFT + P                        → Previous video	shift_key	P
+t                                → Toggle theater mode	key	t
+i                                → Toggle miniplayer	key	i
+c                                → Toggle subtitles / captions	key	c
++ / SHIFT + L                    → Like / Toggle like	key	+
+SHIFT + C                        → Jump to comments / Toggle scroll mode	shift_key	C
+SHIFT + S                        → Toggle scroll mode (↑↓ scroll vs volume)	shift_key	S
+SHIFT + UP / DOWN                → Scroll page up / down (anytime)	wtype_key	Page_Down
+PageUp / PageDown                → Scroll page up / down	wtype_key	Page_Down
+ARROW KEYS (↑ ↓ ← →)             → 2D grid navigate video cards	wtype_key	Down
+/ or s                           → Focus search box	key	/
+BACKSPACE / ALT + LEFT           → Go back in history	wtype_key	BackSpace
+g then h                         → Go to Home feed	keys	gh
+g then s                         → Go to Subscriptions feed	keys	gs
+g then t                         → Go to Trending feed	keys	gt
+g then l                         → Go to Library ("You")	keys	gl
+?                                → Show cheatsheet modal	key	?
+SUPER + CTRL + F                 → OS Tiled full screen toggle	cmd	omarchy-hyprland-window-tiled-fullscreen-toggle
+SUPER + SHIFT + Y                → Launch YouTube Web App	cmd	omarchy-launch-webapp youtube https://youtube.com
+RECORDSEOF
+}
+
+if [[ $print_only == "true" ]]; then
+  output_keybindings | cut -f1
+  exit 0
+fi
+
+records=$(output_keybindings)
+
+monitor_height=$(hyprctl monitors -j 2>/dev/null | jq -r '.[] | select(.focused == true) | .height' 2>/dev/null)
+
+if [[ ! $monitor_height =~ ^[0-9]+$ ]] || ((monitor_height <= 0)); then
+  monitor_height=900
+fi
+
+menu_height=$((monitor_height * 55 / 100))
+
+selection=$(printf '%s\n' "$records" | cut -f1 | omarchy-menu-select 'YouTube keybindings' -- --width 820 --height "$menu_height" 2>/dev/null || true)
+
+if [[ -n $selection ]]; then
+  record=$(awk -F '\t' -v sel="$selection" '$1 == sel { print; exit }' <<< "$records")
+  action_type=$(cut -f2 <<< "$record")
+  action_payload=$(cut -f3 <<< "$record")
+
+  if [[ $action_type == "cmd" ]]; then
+    eval "$action_payload" &
+    exit 0
+  fi
+
+  # Find YouTube window
+  yt_addr=$(hyprctl clients -j 2>/dev/null | jq -r '.[] | select(.class == "chrome-youtube.com__-Default" or (.title | test("YouTube"; "i"))) | .address' | head -n 1)
+
+  if [[ -n $yt_addr ]]; then
+    hyprctl dispatch "hl.dsp.focus({ window = \"address:$yt_addr\" })" >/dev/null 2>&1
+    sleep 0.15
+
+    case "$action_type" in
+      key)
+        wtype "$action_payload"
+        ;;
+      keys)
+        wtype -d 50 "$action_payload"
+        ;;
+      wtype_key)
+        wtype -k "$action_payload"
+        ;;
+      shift_key)
+        wtype -M shift -k "$action_payload" -m shift
+        ;;
+    esac
+  else
+    notify-send -a "YouTube Navigation" "YouTube is not running" "Launch it with SUPER + SHIFT + Y"
+  fi
+fi

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="28" fill="#FF0033"/>
+  <rect x="20" y="26" width="88" height="52" rx="10" fill="#FFFFFF"/>
+  <polygon points="54,38 82,52 54,66" fill="#FF0033"/>
+  <!-- Keyboard Keys Indicator -->
+  <rect x="24" y="88" width="16" height="14" rx="3" fill="#FFFFFF"/>
+  <rect x="44" y="88" width="16" height="14" rx="3" fill="#FFFFFF"/>
+  <rect x="64" y="88" width="16" height="14" rx="3" fill="#FFFFFF"/>
+  <rect x="84" y="88" width="20" height="14" rx="3" fill="#FFFFFF"/>
+</svg>

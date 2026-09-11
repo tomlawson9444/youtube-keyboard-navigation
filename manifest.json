@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Keyboard Navigation",
+  "version": "1.2.0",
+  "description": "Full keyboard navigation, skip ad, windowed tiled fullscreen, and enhanced playback controls for YouTube.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.youtube.com/*",
+        "https://youtube.com/*"
+      ],
+      "css": [
+        "styles.css"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://*.youtube.com/*",
+        "https://youtube.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_idle"
+    }
+  ]
+}
