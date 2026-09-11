@@ -191,16 +191,28 @@
         pointer-events: none !important;
       }
 
+      /* Suppress feed inline video preview overlays to prevent video overlay collisions and decoder lag */
+      ytd-video-preview,
+      ytd-inline-preview-renderer,
+      #inline-preview-player,
+      ytd-video-preview-renderer,
+      #video-preview-container,
+      div#video-preview,
+      .ytd-video-preview {
+        display: none !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+      }
+
       /* Highlight for selected elements (video cards, icons, buttons) */
       .yt-kbd-selected {
         outline: 3px solid #ff0033 !important;
-        outline-offset: 4px !important;
+        outline-offset: 3px !important;
         border-radius: 12px !important;
-        box-shadow: 0 0 24px rgba(255, 0, 51, 0.55), 0 4px 16px rgba(0, 0, 0, 0.7) !important;
+        box-shadow: 0 0 20px rgba(255, 0, 51, 0.55), 0 2px 10px rgba(0, 0, 0, 0.7) !important;
         position: relative !important;
-        z-index: 9999 !important;
-        transform: scale(1.02) !important;
-        transition: transform 0.15s cubic-bezier(0.2, 0, 0, 1), outline 0.15s ease, box-shadow 0.15s ease !important;
+        z-index: 10 !important;
       }
 
       /* Floating badge indicator on selected item */
@@ -482,16 +494,49 @@
     );
   }
 
+  // Dismiss and stop YouTube inline hover preview players
+  function dismissInlinePreviews() {
+    const previews = document.querySelectorAll(
+      'ytd-video-preview, #inline-preview-player, ytd-inline-preview-renderer, ytd-video-preview-renderer, #video-preview-container, div#video-preview, .ytd-video-preview'
+    );
+    for (const p of previews) {
+      try {
+        const v = p.querySelector('video');
+        if (v) {
+          v.pause();
+          v.removeAttribute('src');
+          v.load();
+        }
+      } catch (_) {}
+      try {
+        p.remove();
+      } catch (_) {
+        p.style.display = 'none';
+      }
+    }
+  }
+
   function getVideoCards(root = document) {
     const raw = Array.from(root.querySelectorAll(VIDEO_CARD_SELECTORS));
-    return raw.filter(card => {
+    if (raw.length === 0) return [];
+
+    // Filter out nested cards: keep only topmost card containers
+    const rawSet = new Set(raw);
+    const topLevel = raw.filter(card => {
+      let parent = card.parentElement;
+      while (parent && parent !== root) {
+        if (rawSet.has(parent)) return false;
+        parent = parent.parentElement;
+      }
+      return true;
+    });
+
+    return topLevel.filter(card => {
       if (card.querySelector('ytd-ad-slot-renderer, .ytd-in-feed-ad-layout-renderer, ytd-statement-banner-renderer')) {
         return false;
       }
-      const rect = card.getBoundingClientRect();
-      if (rect.width < 40 || rect.height < 40) return false;
-      const style = window.getComputedStyle(card);
-      if (style.display === 'none' || style.visibility === 'hidden') return false;
+      if (card.offsetWidth < 40 || card.offsetHeight < 40) return false;
+      if (card.offsetParent === null && window.getComputedStyle(card).display === 'none') return false;
       const link = getVideoLink(card);
       return Boolean(link && link.href && !link.href.includes('javascript:'));
     });
@@ -662,6 +707,7 @@
     if (index < 0) index = items.length - 1;
     if (index >= items.length) index = 0;
 
+    dismissInlinePreviews();
     clearNavSelection();
 
     currentNavIndex = index;
@@ -678,7 +724,7 @@
     }
 
     currentNavItem.element.scrollIntoView({
-      behavior: 'smooth',
+      behavior: 'auto',
       block: 'nearest',
       inline: 'nearest'
     });
@@ -688,6 +734,7 @@
   }
 
   function clearNavSelection() {
+    dismissInlinePreviews();
     if (currentNavItem && currentNavItem.element) {
       currentNavItem.element.classList.remove('yt-kbd-selected');
       currentNavItem.element.removeAttribute('data-yt-kbd-badge');
@@ -726,12 +773,13 @@
 
   function selectCard(card) {
     if (!card) return;
+    dismissInlinePreviews();
     clearNavSelection();
     currentCard = card;
     currentCard.classList.add('yt-kbd-selected');
     currentCard.setAttribute('data-yt-kbd-badge', '⏎ Open');
     currentCard.scrollIntoView({
-      behavior: 'smooth',
+      behavior: 'auto',
       block: 'nearest',
       inline: 'nearest'
     });
@@ -761,89 +809,150 @@
       return;
     }
 
-    const curRect = currentCard.getBoundingClientRect();
+    // Pre-calculate and cache bounding rects for all cards in a single layout pass
+    const rects = new Map();
+    for (const c of cards) {
+      rects.set(c, c.getBoundingClientRect());
+    }
+
+    const curRect = rects.get(currentCard);
+    if (!curRect) {
+      selectCard(cards[0]);
+      return;
+    }
+
     const cx = curRect.left + curRect.width / 2;
     const cy = curRect.top + curRect.height / 2;
     const others = cards.filter(c => c !== currentCard);
     let target = null;
 
+    // Helper: test if two cards share the same visual row (generous vertical overlap)
+    function isSameRow(rA, rB) {
+      const vOverlap = Math.min(rA.bottom, rB.bottom) - Math.max(rA.top, rB.top);
+      const minH = Math.min(rA.height, rB.height);
+      const maxH = Math.max(rA.height, rB.height);
+      const cyA = rA.top + rA.height / 2;
+      const cyB = rB.top + rB.height / 2;
+      return vOverlap > minH * 0.3 || Math.abs(cyB - cyA) < maxH * 0.75;
+    }
+
+    // Helper: test if two cards share the same visual column (horizontal overlap)
+    function isSameColumn(rA, rB) {
+      const hOverlap = Math.min(rA.right, rB.right) - Math.max(rA.left, rB.left);
+      return hOverlap > Math.min(rA.width, rB.width) * 0.3;
+    }
+
+    const curIdx = cards.indexOf(currentCard);
+
     if (dir === 'Right') {
       const rowCandidates = others.filter(c => {
-        const r = c.getBoundingClientRect();
-        const candCy = r.top + r.height / 2;
-        return r.left >= curRect.left + 15 && Math.abs(candCy - cy) < curRect.height * 0.6;
+        const r = rects.get(c);
+        return r.left >= curRect.left + 15 && isSameRow(curRect, r);
       });
+
       if (rowCandidates.length > 0) {
-        rowCandidates.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+        rowCandidates.sort((a, b) => rects.get(a).left - rects.get(b).left);
         target = rowCandidates[0];
       } else {
-        const nextRow = others.filter(c => c.getBoundingClientRect().top >= curRect.bottom - 15);
-        if (nextRow.length > 0) {
-          nextRow.sort((a, b) => {
-            const ra = a.getBoundingClientRect();
-            const rb = b.getBoundingClientRect();
-            if (Math.abs(ra.top - rb.top) > 40) return ra.top - rb.top;
+        // Next row: find cards below current row, pick the leftmost card in the next row
+        const nextRows = others.filter(c => {
+          const r = rects.get(c);
+          return r.top >= curRect.bottom - 20;
+        });
+        if (nextRows.length > 0) {
+          nextRows.sort((a, b) => {
+            const ra = rects.get(a);
+            const rb = rects.get(b);
+            if (Math.abs(ra.top - rb.top) > 30) return ra.top - rb.top;
             return ra.left - rb.left;
           });
-          target = nextRow[0];
+          target = nextRows[0];
+        } else if (curIdx >= 0 && curIdx < cards.length - 1) {
+          target = cards[curIdx + 1];
         }
       }
     } else if (dir === 'Left') {
       const rowCandidates = others.filter(c => {
-        const r = c.getBoundingClientRect();
-        const candCy = r.top + r.height / 2;
-        return r.right <= curRect.right - 15 && Math.abs(candCy - cy) < curRect.height * 0.6;
+        const r = rects.get(c);
+        return r.right <= curRect.right - 15 && isSameRow(curRect, r);
       });
+
       if (rowCandidates.length > 0) {
-        rowCandidates.sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
+        rowCandidates.sort((a, b) => rects.get(b).right - rects.get(a).right);
         target = rowCandidates[0];
       } else {
-        const prevRow = others.filter(c => c.getBoundingClientRect().bottom <= curRect.top + 15);
-        if (prevRow.length > 0) {
-          prevRow.sort((a, b) => {
-            const ra = a.getBoundingClientRect();
-            const rb = b.getBoundingClientRect();
-            if (Math.abs(ra.top - rb.top) > 40) return rb.top - ra.top;
+        // Previous row: find cards above current row, pick the rightmost card in previous row
+        const prevRows = others.filter(c => {
+          const r = rects.get(c);
+          return r.bottom <= curRect.top + 20;
+        });
+        if (prevRows.length > 0) {
+          prevRows.sort((a, b) => {
+            const ra = rects.get(a);
+            const rb = rects.get(b);
+            if (Math.abs(ra.top - rb.top) > 30) return rb.top - ra.top;
             return rb.right - ra.right;
           });
-          target = prevRow[0];
+          target = prevRows[0];
+        } else if (curIdx > 0) {
+          target = cards[curIdx - 1];
         }
       }
     } else if (dir === 'Down') {
-      const below = others.filter(c => c.getBoundingClientRect().top + c.getBoundingClientRect().height / 2 > cy + 15);
+      const below = others.filter(c => {
+        const r = rects.get(c);
+        return r.top + r.height / 2 > cy + 15;
+      });
+
       if (below.length > 0) {
-        below.sort((a, b) => {
-          const ra = a.getBoundingClientRect();
-          const rb = b.getBoundingClientRect();
-          const ax = ra.left + ra.width / 2;
-          const ay = ra.top + ra.height / 2;
-          const bx = rb.left + rb.width / 2;
-          const by = rb.top + rb.height / 2;
-          const scoreA = Math.abs(ax - cx) * 2.2 + (ay - cy);
-          const scoreB = Math.abs(bx - cx) * 2.2 + (by - cy);
-          return scoreA - scoreB;
-        });
-        target = below[0];
+        const sameCol = below.filter(c => isSameColumn(curRect, rects.get(c)));
+        if (sameCol.length > 0) {
+          sameCol.sort((a, b) => rects.get(a).top - rects.get(b).top);
+          target = sameCol[0];
+        } else {
+          below.sort((a, b) => {
+            const ra = rects.get(a);
+            const rb = rects.get(b);
+            const ax = ra.left + ra.width / 2;
+            const ay = ra.top + ra.height / 2;
+            const bx = rb.left + rb.width / 2;
+            const by = rb.top + rb.height / 2;
+            const scoreA = Math.abs(ax - cx) * 1.5 + (ay - cy);
+            const scoreB = Math.abs(bx - cx) * 1.5 + (by - cy);
+            return scoreA - scoreB;
+          });
+          target = below[0];
+        }
       } else {
-        window.scrollBy({ top: 600, behavior: 'smooth' });
+        window.scrollBy({ top: 400, behavior: 'auto' });
       }
     } else if (dir === 'Up') {
-      const above = others.filter(c => c.getBoundingClientRect().top + c.getBoundingClientRect().height / 2 < cy - 15);
+      const above = others.filter(c => {
+        const r = rects.get(c);
+        return r.top + r.height / 2 < cy - 15;
+      });
+
       if (above.length > 0) {
-        above.sort((a, b) => {
-          const ra = a.getBoundingClientRect();
-          const rb = b.getBoundingClientRect();
-          const ax = ra.left + ra.width / 2;
-          const ay = ra.top + ra.height / 2;
-          const bx = rb.left + rb.width / 2;
-          const by = rb.top + rb.height / 2;
-          const scoreA = Math.abs(ax - cx) * 2.2 + (cy - ay);
-          const scoreB = Math.abs(bx - cx) * 2.2 + (cy - by);
-          return scoreA - scoreB;
-        });
-        target = above[0];
+        const sameCol = above.filter(c => isSameColumn(curRect, rects.get(c)));
+        if (sameCol.length > 0) {
+          sameCol.sort((a, b) => rects.get(b).bottom - rects.get(a).bottom);
+          target = sameCol[0];
+        } else {
+          above.sort((a, b) => {
+            const ra = rects.get(a);
+            const rb = rects.get(b);
+            const ax = ra.left + ra.width / 2;
+            const ay = ra.top + ra.height / 2;
+            const bx = rb.left + rb.width / 2;
+            const by = rb.top + rb.height / 2;
+            const scoreA = Math.abs(ax - cx) * 1.5 + (cy - ay);
+            const scoreB = Math.abs(bx - cx) * 1.5 + (cy - by);
+            return scoreA - scoreB;
+          });
+          target = above[0];
+        }
       } else {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        window.scrollTo({ top: 0, behavior: 'auto' });
       }
     }
 
@@ -1371,9 +1480,10 @@
     window.addEventListener('keydown', handleKeyDown, true);
 
     document.addEventListener('click', (e) => {
-      const card = e.target.closest(VIDEO_CARD_SELECTORS);
-      if (card && getVideoCards().includes(card)) {
-        selectCard(card);
+      const cards = getVideoCards();
+      const matched = cards.find(c => c.contains(e.target));
+      if (matched) {
+        selectCard(matched);
       }
     }, true);
 
