@@ -53,12 +53,22 @@
     'div[id^="skip-button"] button',
     'button[id*="skip"]',
     'button[class*="skip-button"]',
-    // Center CTA & interstitial overlays (middle of video player)
+    // Center CTA, interstitial screens & action overlays (middle of video player)
     '.ytp-ad-action-interstitial button',
     'button.ytp-ad-action-interstitial-action-button',
     '.ytp-ad-action-interstitial-action-button',
+    'button.ytp-ad-action-interstitial-secondary-action-button',
+    '.ytp-ad-action-interstitial-secondary-action-button',
+    'button.ytp-ad-action-interstitial-dismiss-button',
+    '.ytp-ad-action-interstitial-dismiss-button',
+    '.ytp-ad-action-interstitial-slot button',
     'ytd-action-companion-ad-renderer button',
     '.ytp-ad-player-overlay-instream-info button',
+    '.ytp-ad-player-overlay-flyout-cta button',
+    // Survey skip
+    'button.ytp-ad-survey-skip-button',
+    '.ytp-ad-survey-skip-button',
+    '.ytp-ad-survey button',
     // Legacy & text
     '.videoAdUiSkipButton',
     'button.videoAdUiSkipButton',
@@ -183,9 +193,9 @@
         visibility: visible !important;
         display: block !important;
       }
-      /* Suppress leftover dark interstitial overlays when no ad is showing */
+      /* Suppress dark interstitial overlays and backgrounds */
       #movie_player:not(.ad-showing):not(.ad-interrupting) .ytp-ad-action-interstitial,
-      #movie_player:not(.ad-showing):not(.ad-interrupting) .ytp-ad-action-interstitial-background {
+      .ytp-ad-action-interstitial-background {
         display: none !important;
         pointer-events: none !important;
       }
@@ -1144,16 +1154,45 @@
     return candidates;
   }
 
-  function dismissOverlayAds() {
-    const overlays = document.querySelectorAll(
-      'button.ytp-ad-overlay-close-button, .ytp-ad-overlay-close-button, .ytp-ad-image-overlay button, .ytp-ad-action-interstitial button, button.ytp-ad-action-interstitial-action-button'
+  // Dismiss interstitial screens, center CTA cards, and banner overlays
+  function dismissInterstitialScreens() {
+    let dismissed = false;
+
+    // 1. Interstitial overlays, center CTA cards, and ad surveys
+    const interstitials = document.querySelectorAll(
+      '.ytp-ad-action-interstitial, .ytp-ad-action-interstitial-slot, .ytp-ad-player-overlay-flyout-cta, .ytp-ad-player-overlay-instream-info, .ytp-ad-survey'
     );
-    for (let i = 0; i < overlays.length; i++) {
-      clickSkipButton(overlays[i]);
+    for (const inst of interstitials) {
+      const btns = inst.querySelectorAll('button, [role="button"], .ytp-button');
+      for (const b of btns) {
+        clickSkipButton(b);
+        dismissed = true;
+      }
+      inst.style.setProperty('display', 'none', 'important');
+      inst.style.setProperty('pointer-events', 'none', 'important');
+      inst.style.setProperty('opacity', '0', 'important');
     }
+
+    const backgrounds = document.querySelectorAll('.ytp-ad-action-interstitial-background');
+    backgrounds.forEach(bg => {
+      bg.style.setProperty('display', 'none', 'important');
+      bg.style.setProperty('pointer-events', 'none', 'important');
+      bg.style.setProperty('opacity', '0', 'important');
+    });
+
+    // 2. Banner and image overlay ads
+    const overlays = document.querySelectorAll(
+      'button.ytp-ad-overlay-close-button, .ytp-ad-overlay-close-button, .ytp-ad-image-overlay button'
+    );
+    for (const o of overlays) {
+      clickSkipButton(o);
+      dismissed = true;
+    }
+
+    return dismissed;
   }
 
-  // Detect whether an ad is currently interrupting or showing on the player
+  // Detect whether an ad or interstitial is currently interrupting playback
   function isAdActive() {
     const player = getPlayer();
     if (player && player.classList) {
@@ -1167,6 +1206,9 @@
     if (document.querySelector('.video-ads .ytp-ad-module, .ytp-ad-skip-button-slot, .ytp-ad-text, .ytp-ad-preview-container')) {
       return true;
     }
+    if (document.querySelector('.ytp-ad-action-interstitial, .ytp-ad-survey')) {
+      return true;
+    }
     if (player && typeof player.getAdState === 'function') {
       try {
         if (player.getAdState() > 0) return true;
@@ -1177,7 +1219,7 @@
     return false;
   }
 
-  // Recover video visibility if an ad or overlay left the player in a black state
+  // Recover video visibility if an ad or overlay left the player in a black or paused state
   function recoverVideoDisplay() {
     const video = getVideo();
     const player = getPlayer();
@@ -1198,6 +1240,7 @@
     );
     stuckInterstitials.forEach(el => {
       el.style.setProperty('display', 'none', 'important');
+      el.style.setProperty('pointer-events', 'none', 'important');
     });
 
     // 3. Ensure ad UI containers are not accidentally left with display: none
@@ -1208,7 +1251,7 @@
       }
     });
 
-    // 4. If main video is actually playing, remove leftover ad classes from player
+    // 4. If main video is genuinely playing, remove leftover ad classes from player
     if (video && !video.paused && player && player.classList) {
       const buttons = findSkipButtons();
       if (buttons.length === 0 && isFinite(video.duration) && video.duration > 60) {
@@ -1224,13 +1267,15 @@
     window.dispatchEvent(new Event('resize'));
   }
 
-  // Skip Video Ad on keypress (Shift+A or a) - automatically clears ad pods, countdowns & middle CTA cards
+  let skipMonitorTimer = null;
+
+  // Skip Video Ad on keypress (Shift+A or a) - automatically clears ad pods (Ad 1 & Ad 2), countdowns & middle CTA screens
   function skipAd() {
     const video = getVideo();
     const isAd = isAdActive();
     const buttons = findSkipButtons();
 
-    if (!isAd && buttons.length === 0) {
+    if (!isAd && buttons.length === 0 && document.querySelectorAll('.ytp-ad-action-interstitial, .ytp-ad-survey').length === 0) {
       showOSD('No Ad to Skip', '⏭');
       return false;
     }
@@ -1243,53 +1288,85 @@
       }
     });
 
-    // 1. Click skip buttons immediately
+    // 1. Initial immediate pass: click skip buttons and dismiss interstitial overlays
     for (const btn of buttons) {
       clickSkipButton(btn);
     }
+    dismissInterstitialScreens();
 
-    // 2. Dismiss any overlay banner ads or center interstitial CTA cards
-    dismissOverlayAds();
-
-    // 3. YouTube Player native API skip if supported
     const player = getPlayer();
     if (player && typeof player.skipAd === 'function') {
-      try { player.skipAd(); } catch (e) {}
+      try { player.skipAd(); } catch (_) {}
     }
 
-    // 4. If ad is still active or button was not available yet (e.g. 5-second countdown or unskippable ad):
-    // Fast-forward at 16x speed and mute so it concludes in ~0.3s without decoder stalls!
-    if (isAdActive() && video) {
-      const originalMuted = video.muted;
-      try {
-        video.muted = true;
-        video.playbackRate = 16.0;
-      } catch (e) {}
+    const originalMuted = video ? video.muted : false;
 
-      let checks = 0;
-      const maxChecks = 40; // up to 4s (40 * 100ms)
-      const pollInterval = setInterval(() => {
-        checks++;
-        const currentButtons = findSkipButtons();
-        for (const btn of currentButtons) {
-          clickSkipButton(btn);
+    // 2. Persistent monitor: runs for up to 3.5 seconds across ad transitions (Ad 1 -> Ad 2 / CTA screen)
+    if (skipMonitorTimer) {
+      clearInterval(skipMonitorTimer);
+      skipMonitorTimer = null;
+    }
+
+    let checks = 0;
+    let cleanChecks = 0;
+    const maxChecks = 50; // up to 3.5s (50 * 70ms)
+
+    skipMonitorTimer = setInterval(() => {
+      checks++;
+
+      // Click any new skip buttons that mount during the transition (e.g. Ad 2 skip button)
+      const currentButtons = findSkipButtons();
+      for (const btn of currentButtons) {
+        clickSkipButton(btn);
+      }
+
+      // Dismiss any follow-up interstitial screens or center CTA cards
+      dismissInterstitialScreens();
+
+      const adActive = isAdActive();
+
+      if (adActive && video) {
+        // Ad (or Ad 2 of 2) is active: fast-forward at 16x speed and mute so it concludes in ~0.2s
+        cleanChecks = 0;
+        try {
+          video.muted = true;
+          video.playbackRate = 16.0;
+        } catch (_) {}
+      } else {
+        // No ad or interstitial active in this tick
+        cleanChecks++;
+
+        // If main video was paused by an ad or interstitial, resume playback immediately
+        if (video && video.paused && !adActive) {
+          try {
+            const p = video.play();
+            if (p && typeof p.catch === 'function') p.catch(() => {});
+          } catch (_) {}
         }
-        dismissOverlayAds();
 
-        if (!isAdActive() || checks >= maxChecks) {
-          clearInterval(pollInterval);
+        // Once there are 7 consecutive clean checks (~500ms) with no ads and no interstitials:
+        if (cleanChecks >= 7 || checks >= maxChecks) {
+          clearInterval(skipMonitorTimer);
+          skipMonitorTimer = null;
+
           if (video) {
             try {
               video.playbackRate = 1.0;
               video.muted = originalMuted;
-            } catch (e) {}
+            } catch (_) {}
+
+            if (video.paused) {
+              try {
+                const p = video.play();
+                if (p && typeof p.catch === 'function') p.catch(() => {});
+              } catch (_) {}
+            }
           }
+
           recoverVideoDisplay();
         }
-      }, 100);
-    } else {
-      recoverVideoDisplay();
-    }
+      }
+    }, 70);
 
     showOSD('Ad Skipped', '⏭');
     return true;
