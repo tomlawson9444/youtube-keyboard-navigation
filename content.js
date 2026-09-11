@@ -53,6 +53,13 @@
     'div[id^="skip-button"] button',
     'button[id*="skip"]',
     'button[class*="skip-button"]',
+    // Center CTA & interstitial overlays (middle of video player)
+    '.ytp-ad-action-interstitial button',
+    'button.ytp-ad-action-interstitial-action-button',
+    '.ytp-ad-action-interstitial-action-button',
+    'ytd-action-companion-ad-renderer button',
+    '.ytp-ad-player-overlay-instream-info button',
+    // Legacy & text
     '.videoAdUiSkipButton',
     'button.videoAdUiSkipButton',
     'button[aria-label*="skip" i]',
@@ -944,7 +951,7 @@
     return clicked;
   }
 
-  // Find all potential skip buttons using selectors and deep text/aria scanning
+  // Find all potential skip and middle CTA buttons
   function findSkipButtons() {
     const candidates = [];
 
@@ -961,23 +968,29 @@
       } catch (e) {}
     }
 
-    // 2. Scan ad modules strictly for button elements with skip text or skip aria labels
-    const adModule = document.querySelector('.video-ads.ytp-ad-module, .ytp-ad-module');
-    if (adModule) {
+    // 2. Scan player containers for interactive buttons with skip or continue text
+    const playerContainer = document.getElementById('movie_player') || document.querySelector('.video-ads');
+    if (playerContainer) {
       try {
-        const btns = adModule.querySelectorAll('button, [role="button"], .ytp-button');
+        const btns = playerContainer.querySelectorAll(
+          'button, [role="button"], .ytp-button, .ytp-ad-action-interstitial button, .ytp-ad-action-interstitial div[role="button"]'
+        );
         for (let i = 0; i < btns.length; i++) {
           const el = btns[i];
           if (candidates.includes(el)) continue;
 
           const aria = (el.getAttribute('aria-label') || '').trim().toLowerCase();
-          if (aria.includes('skip')) {
+          if (aria.includes('skip') || aria.includes('continue to video') || aria === 'dismiss') {
             candidates.push(el);
             continue;
           }
 
           const text = (el.textContent || '').trim().toLowerCase();
-          if (text.includes('skip') && text.length <= 15 && !text.startsWith('skip in')) {
+          if (
+            (text.includes('skip') && text.length <= 20 && !text.startsWith('skip in')) ||
+            text.includes('continue to video') ||
+            text === 'dismiss'
+          ) {
             candidates.push(el);
           }
         }
@@ -989,15 +1002,15 @@
 
   function dismissOverlayAds() {
     const overlays = document.querySelectorAll(
-      'button.ytp-ad-overlay-close-button, .ytp-ad-overlay-close-button, .ytp-ad-image-overlay button'
+      'button.ytp-ad-overlay-close-button, .ytp-ad-overlay-close-button, .ytp-ad-image-overlay button, .ytp-ad-action-interstitial button, button.ytp-ad-action-interstitial-action-button'
     );
     for (let i = 0; i < overlays.length; i++) {
       clickSkipButton(overlays[i]);
     }
   }
 
-  // Skip Video Ad on keypress (Shift+A or a)
-  function skipAd() {
+  // Single execution of skip action: clicks buttons, dismisses overlays, accelerates ad
+  function singleSkipPass() {
     const player = getPlayer();
     const isAd = Boolean(
       document.querySelector('.ad-showing, .ad-interrupting') ||
@@ -1005,12 +1018,6 @@
     );
 
     const buttons = findSkipButtons();
-
-    if (!isAd && buttons.length === 0) {
-      showOSD('No Ad to Skip', '⏭');
-      return false;
-    }
-
     let handled = false;
 
     // 1. Click skip buttons
@@ -1020,7 +1027,7 @@
       }
     }
 
-    // 2. Dismiss any overlay banner ads
+    // 2. Dismiss any overlay banner ads or interstitial overlays
     dismissOverlayAds();
 
     // 3. YouTube Player native API skip
@@ -1047,22 +1054,37 @@
             }
           };
           video.addEventListener('ended', restoreSpeed, { once: true });
-          setTimeout(restoreSpeed, 1000);
+          setTimeout(restoreSpeed, 1200);
         } catch (e) {}
       }
     }
 
-    // Burst retry for smooth button clicking during animation transitions
-    if (buttons.length > 0) {
-      [60, 150, 300].forEach(delay => {
-        setTimeout(() => {
-          const retryButtons = findSkipButtons();
-          for (const b of retryButtons) {
-            clickSkipButton(b);
-          }
-        }, delay);
-      });
+    return { isAd, buttonsFound: buttons.length > 0, handled };
+  }
+
+  // Skip Video Ad on keypress (Shift+A or a) - automatically clears ad pods (Ad 1 of 2 & Ad 2 of 2) + center CTA cards
+  function skipAd() {
+    const initial = singleSkipPass();
+
+    if (!initial.isAd && !initial.buttonsFound) {
+      showOSD('No Ad to Skip', '⏭');
+      return false;
     }
+
+    // Multi-stage follow-up over the next 3 seconds to catch consecutive ads (Ad 2 of 2) and middle CTA overlays
+    const followUpDelays = [70, 150, 300, 550, 900, 1400, 2000, 2800];
+    followUpDelays.forEach(delay => {
+      setTimeout(() => {
+        const pass = singleSkipPass();
+        // Once all ads and CTAs have cleared, ensure video playback rate is 1.0
+        if (!pass.isAd && !pass.buttonsFound) {
+          const video = getVideo();
+          if (video && video.playbackRate === 16.0) {
+            video.playbackRate = 1.0;
+          }
+        }
+      }, delay);
+    });
 
     showOSD('Ad Skipped', '⏭');
     return true;
