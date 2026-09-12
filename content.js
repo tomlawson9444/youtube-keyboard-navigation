@@ -1407,7 +1407,7 @@
     const originalMuted = video ? video.muted : false;
 
     // Fast-forward initial pass if ad is active
-    if (video) {
+    if (video && isAd) {
       try {
         video.muted = true;
         video.playbackRate = 16.0;
@@ -1415,6 +1415,14 @@
         if (video.paused) {
           const p = video.play();
           if (p && typeof p.catch === 'function') p.catch(() => {});
+        }
+        // The Skip button's real click handler ignores script-dispatched (untrusted) clicks,
+        // so clickSkipButton() above rarely actually skips it. Jumping the underlying <video>
+        // to its own end fires a native 'ended' event, which YouTube's ad module always honors
+        // (it's a property write, not a gated user-gesture action) and advances immediately
+        // instead of playing the whole ad through at 16x.
+        if (isFinite(video.duration) && video.duration > 0) {
+          video.currentTime = Math.max(0, video.duration - 0.05);
         }
       } catch (_) {}
     }
@@ -1461,6 +1469,12 @@
           if (video.paused) {
             const p = video.play();
             if (p && typeof p.catch === 'function') p.catch(() => {});
+          }
+          // Same trusted-click workaround as the initial pass: force this ad's video element
+          // to its end so it fires 'ended' and YouTube advances past it immediately, rather
+          // than us just riding out the full (sped-up) ad duration.
+          if (isFinite(video.duration) && video.duration > 0) {
+            video.currentTime = Math.max(0, video.duration - 0.05);
           }
         } catch (_) {}
         if (player && typeof player.playVideo === 'function' && video.paused) {
