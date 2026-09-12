@@ -1381,6 +1381,19 @@
     const isAd = isAdActive();
     const buttons = findSkipButtons();
 
+    console.log('[ytkbd:skipAd] invoked', {
+      isAd,
+      buttonCount: buttons.length,
+      buttons: buttons.map(b => ({
+        tag: b.tagName,
+        cls: typeof b.className === 'string' ? b.className : '',
+        text: (b.textContent || '').trim().slice(0, 30),
+        aria: b.getAttribute && b.getAttribute('aria-label')
+      })),
+      currentTime: video ? video.currentTime : null,
+      duration: video ? video.duration : null
+    });
+
     if (!isAd && buttons.length === 0) {
       showOSD('No Ad to Skip', '⏭');
       return false;
@@ -1443,8 +1456,28 @@
     skipMonitorTimer = setInterval(() => {
       checks++;
 
+      // TEMP DEBUG: shows whether our currentTime write from the previous tick actually
+      // stuck, or whether YouTube reset it back down before this tick ran.
+      if (video) {
+        console.log('[ytkbd:skipAd] tick', checks, {
+          currentTime: video.currentTime,
+          duration: video.duration,
+          paused: video.paused,
+          playbackRate: video.playbackRate,
+          readyState: video.readyState
+        });
+      }
+
       // Click any new skip buttons that mount during the transition (e.g. Ad 2 skip button, or endcap pill button)
       const currentButtons = findSkipButtons();
+      if (currentButtons.length) {
+        console.log('[ytkbd:skipAd] found buttons', currentButtons.map(b => ({
+          tag: b.tagName,
+          cls: typeof b.className === 'string' ? b.className : '',
+          text: (b.textContent || '').trim().slice(0, 30),
+          aria: b.getAttribute && b.getAttribute('aria-label')
+        })));
+      }
       for (const btn of currentButtons) {
         clickSkipButton(btn);
       }
@@ -1474,7 +1507,10 @@
           // to its end so it fires 'ended' and YouTube advances past it immediately, rather
           // than us just riding out the full (sped-up) ad duration.
           if (isFinite(video.duration) && video.duration > 0) {
-            video.currentTime = Math.max(0, video.duration - 0.05);
+            const target = Math.max(0, video.duration - 0.05);
+            console.log('[ytkbd:skipAd] forcing currentTime', { from: video.currentTime, to: target });
+            video.currentTime = target;
+            console.log('[ytkbd:skipAd] currentTime immediately after write', video.currentTime);
           }
         } catch (_) {}
         if (player && typeof player.playVideo === 'function' && video.paused) {
