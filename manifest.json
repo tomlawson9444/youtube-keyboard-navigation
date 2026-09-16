@@ -3,6 +3,8 @@
   "name": "YouTube Keyboard Navigation — Omarchy Edition",
   "version": "1.2.0",
   "description": "Full keyboard navigation, instant ad skipping, windowed tiled full screen, and enhanced playback controls for YouTube on Omarchy Linux.",
+  "author": "Tom Lawson",
+  "homepage_url": "https://github.com/tomlawson9444/youtube-keyboard-navigation",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

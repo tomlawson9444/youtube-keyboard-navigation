@@ -93,7 +93,7 @@ cd youtube-keyboard-navigation
 ./install.sh
 ```
 
-This installs the extension to `~/.config/chromium/extensions/youtube-nav` and places the interactive menu helper in `~/.local/bin/omarchy-menu-youtube-keybindings`.
+This installs the extension to `~/.config/chromium/extensions/youtube-nav` and places the interactive menu helper in `~/.local/bin/omarchy-menu-youtube-keybindings`. The installer is safe to re-run: it verifies every source file exists before copying anything, and it only ever writes into those two known locations.
 
 ### 2. Load into Your Browser
 Compatible with **Chromium**, **Google Chrome**, **Brave**, **Microsoft Edge**, and **Arc**:
@@ -114,6 +114,18 @@ o.bind("SUPER + SHIFT + K", "YouTube Shortcuts", "omarchy-menu-youtube-keybindin
 ```ini
 bind = $mainMod SHIFT, K, exec, omarchy-menu-youtube-keybindings
 ```
+
+### 4. Removal
+To cleanly remove everything the installer added:
+
+```bash
+cd youtube-keyboard-navigation
+./uninstall.sh
+```
+
+This deletes `~/.config/chromium/extensions/youtube-nav` and `~/.local/bin/omarchy-menu-youtube-keybindings`, and only those two paths — it never touches anything else on your system. It also prints reminders to:
+- Remove the extension from `chrome://extensions` (deleting its source folder does not unregister a "Load unpacked" extension on its own).
+- Delete the Hyprland keybinding line from `~/.config/hypr/bindings.lua` or `hyprland.conf`, if you added one.
 
 ---
 
